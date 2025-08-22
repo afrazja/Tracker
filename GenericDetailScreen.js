@@ -1,5 +1,6 @@
 import React, { useMemo, useState, useEffect } from 'react';
-import { View, Text, StyleSheet, FlatList, TouchableOpacity, TextInput, Modal, Alert } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, TextInput, Modal, Alert } from 'react-native';
+import { FlashList } from '@shopify/flash-list';
 import ScreenHeader from './components/ScreenHeader';
 import { useTrackers } from './TrackersContext';
 
@@ -12,6 +13,8 @@ export default function GenericDetailScreen({ route, navigation }) {
   const [editing, setEditing] = useState(null);
   const [values, setValues] = useState({});
   const records = tracker?.records || [];
+  // Lightweight memo for summary counts (depends on length + tracker.value)
+  const entryCount = records.length;
   // auto-hide undo snackbar
   useEffect(() => {
     if (!undo) return;
@@ -88,9 +91,10 @@ export default function GenericDetailScreen({ route, navigation }) {
   <Text style={[s.hCell, { width: 50 }]}>Edit</Text>
   <Text style={[s.hCell, { width: 60 }]}>Delete</Text>
       </View>
-      <FlatList
+      <FlashList
         data={records}
         keyExtractor={item => item.id}
+        estimatedItemSize={52}
         renderItem={({ item }) => (
           <View style={s.row}>
             {config.buildRow(item).map((v, idx) => (
