@@ -4,6 +4,21 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] - 2025-08-21
+### Added
+- Schema version 3 introducing per-field `type` (number|string|enum placeholder) and optional `decimals` precision.
+- Migration (v2 -> v3) that converts numeric string record values to numbers respecting field decimals.
+- Input validation in Add Record modal (required fields, numeric parsing, min/max constraints, date format check, inline error display).
+
+### Changed
+- `addRecord` now coerces values using field metadata instead of tracker-id specific logic (legacy fallback retained if fields absent).
+
+### Notes
+- Dual-storage mode for records (`trackers[].records` + `recordsIndex`) retained; full normalization planned for a future release.
+
+### Upgrade Guide
+No manual steps required; hydration migration runs automatically. Optionally enrich older custom tracker fields with `type` & `decimals`.
+
 ## [1.0.0] - 2025-08-21
 ### Added
 - Initial stable release of the Tracker App.
