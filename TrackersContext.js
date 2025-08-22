@@ -8,7 +8,7 @@ const TrackersContext = createContext(null);
 
 // --- Schema Versioning ---
 // Increment this when persisted tracker shape changes (add/remove/rename fields needing migration).
-const TRACKERS_SCHEMA_VERSION = 2; // v0 legacy (plain array), v1 adds valueFieldId, v2 adds createdAt & normalizes fields
+const TRACKERS_SCHEMA_VERSION = 3; // v0 legacy (plain array), v1 adds valueFieldId, v2 adds createdAt & normalizes fields, v3 adds field.type & decimals + numeric normalization
 
 // Migrations: key = fromVersion, value = function(dataArray) => upgradedDataArray (toVersion = fromVersion+1)
 // Each function MUST be pure & idempotent for already-upgraded data.
@@ -33,14 +33,48 @@ const trackerMigrations = {
       ...t,
       fields: (t.fields || []).map(f => ({ id: f.id, label: f.label ?? f.id, unit: f.unit || '', inherited: !!f.inherited }))
     }));
+  },
+  2: (data) => {
+    // v2 -> v3: add type & decimals to fields; coerce numeric strings in records
+    const numericLike = new Set(['pages','duration','amount','time','sets','reps','satisfaction']);
+    const inferType = (field) => {
+      if (field.type) return field.type;
+      if (numericLike.has(field.id)) return 'number';
+      return field.unit ? 'number' : 'string';
+    };
+    return data.map(t => {
+      const fieldMeta = {};
+      const newFields = (t.fields || []).map(f => {
+        const type = inferType(f);
+        const decimals = (typeof f.decimals === 'number') ? f.decimals : (type === 'number' ? 0 : undefined);
+        const nf = { id: f.id, label: f.label ?? f.id, unit: f.unit || '', inherited: !!f.inherited, type, ...(decimals !== undefined ? { decimals } : {}) };
+        fieldMeta[f.id] = nf;
+        return nf;
+      });
+      // Coerce existing record values for number fields
+      const records = (t.records || []).map(r => {
+        const nr = { ...r };
+        Object.keys(nr).forEach(k => {
+          const fm = fieldMeta[k];
+          if (fm && fm.type === 'number' && typeof nr[k] === 'string') {
+            const parsed = parseFloat(nr[k]);
+            if (!Number.isNaN(parsed)) {
+              nr[k] = (typeof fm.decimals === 'number') ? Number(parsed.toFixed(fm.decimals)) : parsed;
+            }
+          }
+        });
+        return nr;
+      });
+      return { ...t, fields: newFields, records };
+    });
   }
 };
 
 const initialTrackers = [
-  { id: 'expense', title: 'Expense', icon: '💸', value: 0, unit: '$', color: '#EF4444', filterField: 'category', records: [], valueFieldId: 'amount', fields: [{ id: 'amount', label: 'Amount', unit: '$', inherited: false }] },
-  { id: 'workout', title: 'Workout', icon: '🏋️', value: 0, unit: 'min', color: '#10B981', filterField: 'workoutType', records: [], valueFieldId: 'time', fields: [{ id: 'time', label: 'Time', unit: 'min', inherited: false }] },
-  { id: 'reading', title: 'Reading', icon: '📖', value: 0, unit: 'pages', color: '#F59E0B', filterField: 'title', records: [], valueFieldId: 'pages', fields: [{ id: 'pages', label: 'Pages', unit: 'pages', inherited: false }] },
-  { id: 'meditation', title: 'Meditation', icon: '🧘', value: 0, unit: 'min', color: '#A855F7', filterField: 'satisfaction', records: [], valueFieldId: 'duration', fields: [{ id: 'duration', label: 'Duration', unit: 'min', inherited: false }] },
+  { id: 'expense', title: 'Expense', icon: '💸', value: 0, unit: '$', color: '#EF4444', filterField: 'category', records: [], valueFieldId: 'amount', fields: [{ id: 'amount', label: 'Amount', unit: '$', inherited: false, type: 'number', decimals: 2 }] },
+  { id: 'workout', title: 'Workout', icon: '🏋️', value: 0, unit: 'min', color: '#10B981', filterField: 'workoutType', records: [], valueFieldId: 'time', fields: [{ id: 'time', label: 'Time', unit: 'min', inherited: false, type: 'number', decimals: 0 }] },
+  { id: 'reading', title: 'Reading', icon: '📖', value: 0, unit: 'pages', color: '#F59E0B', filterField: 'title', records: [], valueFieldId: 'pages', fields: [{ id: 'pages', label: 'Pages', unit: 'pages', inherited: false, type: 'number', decimals: 0 }] },
+  { id: 'meditation', title: 'Meditation', icon: '🧘', value: 0, unit: 'min', color: '#A855F7', filterField: 'satisfaction', records: [], valueFieldId: 'duration', fields: [{ id: 'duration', label: 'Duration', unit: 'min', inherited: false, type: 'number', decimals: 0 }] },
 ];
 
 export function TrackersProvider({ children }) {
@@ -204,18 +238,35 @@ export function TrackersProvider({ children }) {
       const dateStr = record.date || new Date().toISOString().slice(0,10);
       const existing = t.records || [];
       let newRecord = { id, date: dateStr, createdAt: new Date().toISOString(), ...record };
-      if (trackerId === 'reading') {
-        newRecord.pages = Number(record.pages) || 0;
-        newRecord.duration = Number(record.duration) || 0;
-      } else if (trackerId === 'expense') {
-        newRecord.amount = Number(record.amount) || 0;
-      } else if (trackerId === 'workout') {
-        newRecord.sets = Number(record.sets) || 0;
-        newRecord.reps = Number(record.reps) || 0;
-        newRecord.time = Number(record.time) || 0;
-      } else if (trackerId === 'meditation') {
-        newRecord.duration = Number(record.duration) || 0;
-        newRecord.satisfaction = record.satisfaction;
+      // Coerce using field metadata first (preferred)
+      if (t.fields && Array.isArray(t.fields)) {
+        t.fields.forEach(f => {
+          if (f.type === 'number') {
+            const raw = newRecord[f.id];
+            if (raw !== undefined && raw !== null && raw !== '') {
+              const parsed = typeof raw === 'number' ? raw : parseFloat(raw);
+              if (!Number.isNaN(parsed)) {
+                const val = (typeof f.decimals === 'number') ? Number(parsed.toFixed(f.decimals)) : parsed;
+                newRecord[f.id] = val;
+              }
+            }
+          }
+        });
+      } else {
+        // Fallback legacy coercion by tracker id
+        if (trackerId === 'reading') {
+          newRecord.pages = Number(record.pages) || 0;
+          newRecord.duration = Number(record.duration) || 0;
+        } else if (trackerId === 'expense') {
+          newRecord.amount = Number(record.amount) || 0;
+        } else if (trackerId === 'workout') {
+          newRecord.sets = Number(record.sets) || 0;
+          newRecord.reps = Number(record.reps) || 0;
+          newRecord.time = Number(record.time) || 0;
+        } else if (trackerId === 'meditation') {
+          newRecord.duration = Number(record.duration) || 0;
+          newRecord.satisfaction = record.satisfaction;
+        }
       }
       let records = [...existing, newRecord];
       // Retention enforcement

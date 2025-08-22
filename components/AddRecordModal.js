@@ -15,45 +15,78 @@ export default function AddRecordModal({ tracker, visible, onClose }) {
     let base = [];
     switch (tracker.id) {
       case 'reading': base = [
-        { key: 'title', label: 'Title', keyboardType: 'default' },
-        { key: 'pages', label: 'Pages', keyboardType: 'numeric' },
-        { key: 'duration', label: 'Duration (min)', keyboardType: 'numeric' }
+        { key: 'title', label: 'Title', keyboardType: 'default', type: 'string', required: true },
+        { key: 'pages', label: 'Pages', keyboardType: 'numeric', type: 'number', min: 0, required: true },
+        { key: 'duration', label: 'Duration (min)', keyboardType: 'numeric', type: 'number', min: 0 }
       ]; break;
       case 'expense': base = [
-        { key: 'category', label: 'Category', keyboardType: 'default' },
-        { key: 'amount', label: 'Amount', keyboardType: 'numeric' }
+        { key: 'category', label: 'Category', keyboardType: 'default', type: 'string', required: true },
+        { key: 'amount', label: 'Amount', keyboardType: 'numeric', type: 'number', min: 0, decimals: 2, required: true }
       ]; break;
       case 'workout': base = [
-        { key: 'workoutType', label: 'Workout Type', keyboardType: 'default' },
-        { key: 'sets', label: 'Sets', keyboardType: 'numeric' },
-        { key: 'reps', label: 'Reps', keyboardType: 'numeric' },
-        { key: 'time', label: 'Time (min)', keyboardType: 'numeric' }
+        { key: 'workoutType', label: 'Workout Type', keyboardType: 'default', type: 'string', required: true },
+        { key: 'sets', label: 'Sets', keyboardType: 'numeric', type: 'number', min: 0 },
+        { key: 'reps', label: 'Reps', keyboardType: 'numeric', type: 'number', min: 0 },
+        { key: 'time', label: 'Time (min)', keyboardType: 'numeric', type: 'number', min: 0 }
       ]; break;
       case 'meditation': base = [
-        { key: 'duration', label: 'Duration (min)', keyboardType: 'numeric' },
-        { key: 'satisfaction', label: 'Satisfaction (1-10)', keyboardType: 'numeric' }
+        { key: 'duration', label: 'Duration (min)', keyboardType: 'numeric', type: 'number', min: 0, required: true },
+        { key: 'satisfaction', label: 'Satisfaction (1-10)', keyboardType: 'numeric', type: 'number', min: 1, max: 10 }
       ]; break;
       default: {
         const primary = tracker.valueFieldId || tracker.fields?.[0]?.id || 'value';
-        base = [ { key: primary, label: tracker.fields?.find(f=>f.id===primary)?.label || 'Value', keyboardType: 'numeric' } ];
+        const fMeta = tracker.fields?.find(f=>f.id===primary);
+        base = [ { key: primary, label: fMeta?.label || 'Value', keyboardType: 'numeric', type: fMeta?.type || 'number', min: 0 } ];
       }
     }
-    return [...base, { key: 'date', label: 'Date (YYYY-MM-DD)', keyboardType: 'default' }];
+    return [...base, { key: 'date', label: 'Date (YYYY-MM-DD)', keyboardType: 'default', type: 'string' }];
   }, [tracker]);
   if (!tracker) return null;
 
   const onChange = (k,v) => setForm(prev => ({ ...prev, [k]: v }));
-  const canSubmit = fieldDefs.some(f => form[f.key] && String(form[f.key]).trim() !== '');
+  // Validation logic: required fields present, numeric fields valid & within min/max
+  const validation = React.useMemo(() => {
+    const errors = {};
+    fieldDefs.forEach(fd => {
+      const val = form[fd.key];
+      if (fd.required && (val === undefined || val === null || String(val).trim() === '')) {
+        errors[fd.key] = 'Required';
+        return;
+      }
+      if (fd.type === 'number' && val !== undefined && val !== null && String(val).trim() !== '') {
+        const num = Number(val);
+        if (Number.isNaN(num)) {
+          errors[fd.key] = 'Invalid number';
+          return;
+        }
+        if (fd.min !== undefined && num < fd.min) errors[fd.key] = `Min ${fd.min}`;
+        if (fd.max !== undefined && num > fd.max) errors[fd.key] = `Max ${fd.max}`;
+      }
+      if (fd.key === 'date' && val) {
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(String(val))) errors[fd.key] = 'YYYY-MM-DD';
+      }
+    });
+    return { errors, valid: Object.keys(errors).length === 0 };
+  }, [fieldDefs, form]);
+  const canSubmit = validation.valid && fieldDefs.some(f => form[f.key] && String(form[f.key]).trim() !== '');
   const handleSubmit = async () => {
     if (!canSubmit || submitting) return;
     setSubmitting(true);
     try {
       const payload = {};
-  fieldDefs.forEach(fd => {
+      fieldDefs.forEach(fd => {
         const raw = form[fd.key];
-        let val = raw;
-        if (/^[-+]?[0-9]*\.?[0-9]+$/.test(String(raw))) val = Number(raw);
-        payload[fd.key] = val;
+        if (raw === undefined || raw === null || raw === '') return;
+        if (fd.type === 'number') {
+          const num = Number(raw);
+            if (!Number.isNaN(num)) {
+              let final = num;
+              if (typeof fd.decimals === 'number') final = Number(num.toFixed(fd.decimals));
+              payload[fd.key] = final;
+            }
+        } else {
+          payload[fd.key] = raw;
+        }
       });
   if (!payload.date) payload.date = new Date().toISOString().slice(0,10);
       addRecord(tracker.id, payload);
@@ -68,19 +101,23 @@ export default function AddRecordModal({ tracker, visible, onClose }) {
           <View style={styles.card}>
             <Text style={styles.title}>Add {tracker.title} Record</Text>
             <ScrollView contentContainerStyle={{ paddingBottom: 4 }} style={{ maxHeight: 340 }}>
-              {fieldDefs.map(fd => (
-                <View key={fd.key} style={styles.fieldRow}>
-                  <Text style={styles.label}>{fd.label}</Text>
-                  <TextInput
-                    value={form[fd.key] ? String(form[fd.key]) : ''}
-                    onChangeText={t => onChange(fd.key, t)}
-                    placeholder={fd.label}
-                    keyboardType={fd.keyboardType}
-                    style={styles.input}
-                    placeholderTextColor="#9CA3AF"
-                  />
-                </View>
-              ))}
+              {fieldDefs.map(fd => {
+                const err = validation.errors[fd.key];
+                return (
+                  <View key={fd.key} style={styles.fieldRow}>
+                    <Text style={styles.label}>{fd.label}{fd.required ? ' *' : ''}</Text>
+                    <TextInput
+                      value={form[fd.key] ? String(form[fd.key]) : ''}
+                      onChangeText={t => onChange(fd.key, t)}
+                      placeholder={fd.label}
+                      keyboardType={fd.keyboardType}
+                      style={[styles.input, err ? styles.inputError : null]}
+                      placeholderTextColor="#9CA3AF"
+                    />
+                    {err ? <Text style={styles.errorTxt}>{err}</Text> : null}
+                  </View>
+                );
+              })}
             </ScrollView>
             <View style={styles.actions}>
               <TouchableOpacity onPress={onClose} style={[styles.btn, styles.cancelBtn]} disabled={submitting}>
@@ -105,6 +142,7 @@ const styles = StyleSheet.create({
   fieldRow: { marginBottom:14 },
   label: { color:'#F3F4F6', fontSize:13, fontWeight:'600', marginBottom:6 },
   input: { borderWidth:1, borderColor:'rgba(255,255,255,0.15)', borderRadius:12, paddingHorizontal:12, paddingVertical:10, color:'#fff', fontSize:15, backgroundColor:'rgba(255,255,255,0.06)' },
+  inputError: { borderColor:'#F87171' },
   actions: { flexDirection:'row', justifyContent:'flex-end', marginTop:12, gap:12 },
   btn: { paddingHorizontal:18, paddingVertical:12, borderRadius:12 },
   cancelBtn: { backgroundColor:'rgba(255,255,255,0.12)' },
@@ -112,4 +150,5 @@ const styles = StyleSheet.create({
   submitBtn: { backgroundColor: theme?.colors?.accentBlue || '#2563EB' },
   submitBtnDisabled: { backgroundColor:'rgba(255,255,255,0.20)' },
   submitTxt: { color:'#fff', fontWeight:'700' }
+  ,errorTxt: { color:'#FCA5A5', fontSize:11, marginTop:4 }
 });
