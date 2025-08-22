@@ -1,5 +1,6 @@
 import React, { useMemo, useState, useEffect } from 'react';
-import { View, Text, StyleSheet, FlatList, TouchableOpacity, TextInput, Modal, Alert } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, TextInput, Modal, Alert } from 'react-native';
+import { FlashList } from '@shopify/flash-list';
 import ScreenHeader from './components/ScreenHeader';
 import { useTrackers } from './TrackersContext';
 
@@ -12,6 +13,16 @@ export default function ReadingDetailScreen({ route, navigation }) {
   const [editValues, setEditValues] = useState({ title: '', pages: '', duration: '', date: '' });
 
   const records = tracker?.records || [];
+
+  // Memoized aggregate stats (uses length + summed values for dependency proxy)
+  const readingAgg = useMemo(() => {
+    if (!tracker || tracker.id !== 'reading') return null;
+    let totalPages = 0; let totalDuration = 0;
+    for (const r of records) { totalPages += Number(r.pages) || 0; totalDuration += Number(r.duration) || 0; }
+    const hours = totalDuration / 60;
+    const pagesPerHour = hours > 0 ? (totalPages / hours) : 0;
+    return { totalPages, totalDuration, pagesPerHour };
+  }, [tracker?.id, records.length, ...records.slice(0,50).map(r=>r.id)]); // cheap length/id dependency; deep values not required for recalculation frequency
   // auto-hide undo snackbar
   useEffect(() => {
     if (!undo) return;
@@ -105,9 +116,10 @@ export default function ReadingDetailScreen({ route, navigation }) {
   <Text style={[s.hCell, { width: 50 }]}>Edit</Text>
   <Text style={[s.hCell, { width: 60 }]}>Delete</Text>
       </View>
-      <FlatList
-  data={records}
+      <FlashList
+        data={records}
         keyExtractor={item => item.id}
+        estimatedItemSize={52}
         contentContainerStyle={{ paddingBottom: 40 }}
         renderItem={({ item }) => (
           <View style={s.row}>
